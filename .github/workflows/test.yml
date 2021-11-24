@@ -11,4 +11,3 @@ jobs:
         files: 'version.json'
     env:
         version: ${{ secrets.VERSION }}
-        url: https://github.com/${{github.repository}}

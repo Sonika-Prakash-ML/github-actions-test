@@ -1,15 +1,14 @@
-name: manually-triggered-workflow
-
 on: workflow_dispatch
+name: variable substitution in json
 
 jobs:
-  say_version:
+  release:
     runs-on: windows-2019
-    steps: 
-      - name: checkout
-        uses: actions/checkout@v2
-      - name: test
-        run: |
-          echo "Hello ${{ github.ref }}!"
-          echo "${{ github.ref_name }}"
-          echo "${{ github.run_number }}"
+    steps:
+    - uses: actions/checkout@v2
+    - uses: microsoft/variable-substitution@v1 
+      with:
+        files: 'version.json'
+    env:
+        version: ${{ secrets.VERSION }}
+        url: https://github.com/${{github.repository}}

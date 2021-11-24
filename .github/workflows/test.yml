@@ -1,54 +1,87 @@
-name: manually-triggered-workflow
+name: windows-msi
 
 on: workflow_dispatch
 
 jobs:
-  say_hello:
+  release:
     runs-on: windows-2019
     steps: 
       - name: checkout
         uses: actions/checkout@v2
-      - name: test
+      - name: Set up Go
+        uses: actions/setup-go@v1
+        with:
+          go-version: 1.14.x
+      - name: Build Sfagent Binary
         run: |
-          echo "Hello ${{ github.ref }}!"
-          echo "${{ github.ref_name }}"
-      # - name: Set up Go
-      #   uses: actions/setup-go@v1
-      #   with:
-      #     go-version: 1.14.x
-      # - name: Build Sfagent Binary
-      #   run: |
-      #     echo "hello"
-      #     go build -o hello.exe
-      #     ls "C:\Program Files (x86)"
-      # - name: MSI Setup
-      #   run: |
-      #     mkdir -p ../windows-msi
-      #     cp ./hello.exe ../windows-msi/
-      #     cp ./msi-installer/sample.wxs ../windows-msi
-      #     cd ../windows-msi
-      #     ls
-      #     & 'C:\Program Files (x86)\WiX Toolset v3.11\bin\candle.exe' .\sample.wxs
-      #     & 'C:\Program Files (x86)\WiX Toolset v3.11\bin\light.exe' -ext WixUtilExtension.dll .\sample.wixobj -o sample.msi
-      #     ls 
-      # - name: Create Release
-      #   id: create_release
-      #   uses: actions/create-release@v1
-      #   env:
-      #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      #   with:
-      #     tag_name: v0.1
-      #     release_name: Release v0.1
-      #     draft: false
-      #     prerelease: false
-      # - name: Upload Release Asset
-      #   id: upload-release-asset 
-      #   uses: actions/upload-release-asset@v1
-      #   env:
-      #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      #   with:
-      #     upload_url: ${{ steps.create_release.outputs.upload_url }} # This pulls from CREATE RELEASE step above, referencing it's ID to get its outputs object, which include a `upload_url`. See this blog post for more info: https://jasonet.co/posts/new-features-of-github-actions/#passing-data-to-future-steps 
-      #     asset_path: ../windows-msi/sample.msi
-      #     asset_name: sample.msi
-      #     asset_content_type: application/msi
-      #   #working-directory: ./temp
+          cd cmd/vm/
+          $Env:CGO_ENABLED=0; go build -v -a -ldflags " -extldflags -static -X main.version=$VERSION -X main.date=1 -X main.commit=$COMMIT_ID" -o sfagent.exe
+        env:
+          COMMIT_ID: ${{github.sha}}
+          VERSION: v0.0.1
+      - name: Build Sfagent and Sfagent-logrotate service binaries
+        run: |
+          cd windowsInstaller/msi-installer/sfagent-service
+          go build
+          cd ../sfagent-logrotate-service
+          go build 
+      - name: Setup MSI directory
+        run: |
+          mkdir -p ../msi-windows/Sfagent
+          cp cmd/vm/sfagent.exe ../msi-windows/Sfagent/
+          cp windowsInstaller/msi-installer/sfagent-service/sfagent-service.exe ../msi-windows/Sfagent/
+          cp windowsInstaller/msi-installer/sfagent-logrotate-service/sfagent-logrotate-service.exe ../msi-windows/Sfagent/
+          cp windowsInstaller/msi-installer/SfagentSetup.wxs ../msi-windows
+          cp windowsInstaller/msi-installer/ApplicationFiles.wxs ../msi-windows
+          cp windowsInstaller/msi-installer/SF-logo-Top.bmp ../msi-windows
+          cp windowsInstaller/msi-installer/SF-logo-UI.bmp ../msi-windows
+          cp -r certs ../msi-windows/Sfagent
+          cp -r mappings ../msi-windows/Sfagent
+          cp -r normalization ../msi-windows/Sfagent
+          cp -r scripts ../msi-windows/Sfagent
+          cp -r windowsInstaller/sftrace ../msi-windows/Sfagent
+          cp -r windowsInstaller/td-agent-bit ../msi-windows/Sfagent
+          cp windowsInstaller/sf_env.sh ../msi-windows/Sfagent
+          cp sample.yaml ../msi-windows/Sfagent
+          cp jolokia.jar ../msi-windows/Sfagent
+          cp jolokia.war ../msi-windows/Sfagent
+          cp windowsInstaller/msi-installer/CodeSigningCertificate.pfx ../msi-windows
+          touch ../msi-windows/Sfagent/config.yaml
+      - name: Sign Binaries
+        run: |
+          cd ../msi-windows/Sfagent
+          & 'C:\Program Files (x86)\Windows Kits\10\bin\x86\signtool.exe' sign /f ../CodeSigningCertificate.pfx /n "Maplelabs Solutions Private Limited" /d "SnappyFlow Sfagent for Windows" /t http://timestamp.digicert.com /du "https://www.snappyflow.io" /p M@ple@123 /fd SHA256 sfagent.exe
+          & 'C:\Program Files (x86)\Windows Kits\10\bin\x86\signtool.exe' sign /f ../CodeSigningCertificate.pfx /n "Maplelabs Solutions Private Limited" /d "Sfagent service" /t http://timestamp.digicert.com /du "https://www.snappyflow.io" /p M@ple@123 /fd SHA256 sfagent-service.exe
+          & 'C:\Program Files (x86)\Windows Kits\10\bin\x86\signtool.exe' sign /f ../CodeSigningCertificate.pfx /n "Maplelabs Solutions Private Limited" /d "Sfagent logrotate service" /t http://timestamp.digicert.com /du "https://www.snappyflow.io" /p M@ple@123 /fd SHA256 sfagent-logrotate-service.exe
+          & 'C:\Program Files (x86)\Windows Kits\10\bin\x86\signtool.exe' sign /f ../CodeSigningCertificate.pfx /n "Maplelabs Solutions Private Limited" /d "Sfagent uaparserserver" /t http://timestamp.digicert.com /du "https://www.snappyflow.io" /p M@ple@123 /fd SHA256 ./td-agent-bit/bin/uaparserserver.exe
+          & 'C:\Program Files (x86)\Windows Kits\10\bin\x86\signtool.exe' sign /f ../CodeSigningCertificate.pfx /n "Maplelabs Solutions Private Limited" /d "Sfagent url-normalizer" /t http://timestamp.digicert.com /du "https://www.snappyflow.io" /p M@ple@123 /fd SHA256 ./td-agent-bit/bin/url-normalizer.exe
+      - name: Build MSI windows Installer and sign msi Installer
+        run: |
+          cd ../msi-windows
+          & 'C:\Program Files (x86)\WiX Toolset v3.11\bin\candle.exe' .\SfagentSetup.wxs .\ApplicationFiles.wxs
+          & 'C:\Program Files (x86)\WiX Toolset v3.11\bin\light.exe' -ext WixUtilExtension.dll -ext WixUIExtension.dll -cultures:en-us .\SfagentSetup.wixobj .\ApplicationFiles.wixobj -o SfagentSetup.msi -b .\Sfagent\
+          ls
+          & 'C:\Program Files (x86)\Windows Kits\10\bin\x86\signtool.exe' sign /f CodeSigningCertificate.pfx /n "Maplelabs Solutions Private Limited" /d "SnappyFlow Sfagent Windows Installer" /t http://timestamp.digicert.com /du "https://www.snappyflow.io" /p M@ple@123 /fd SHA256 SfagentSetup.msi
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: sfagent-windows-v0.0.1
+          release_name: sfagent-windows-v0.0.1
+          draft: false
+          prerelease: false
+      - name: Upload Release Asset
+        id: upload-release-asset 
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }} # This pulls from CREATE RELEASE step above, referencing it's ID to get its outputs object, which include a `upload_url`. See this blog post for more info: https://jasonet.co/posts/new-features-of-github-actions/#passing-data-to-future-steps 
+          asset_path: ../msi-windows/SfagentSetup.msi
+          asset_name: SfagentSetup.msi
+          asset_content_type: application/msi
+
+
+
